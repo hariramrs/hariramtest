@@ -1,57 +1,73 @@
 import streamlit as st
-import requests
+from supabase import create_client
 import datetime
+import base64
+from PIL import Image
+import io
+import requests
+
+# ---------------------------
+# SUPABASE CONFIG
+# ---------------------------
+SUPABASE_URL = "YOUR_URL"
+SUPABASE_KEY = "YOUR_KEY"
+
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 st.set_page_config(page_title="DTDC Booking", layout="centered")
-st.title("📦 DTDC Booking Form")
+st.title("📦 DTDC Booking")
 
 # ---------------------------
-# CONFIG
+# IMAGE COMPRESS
 # ---------------------------
-GET_CN_URL = "YOUR_GOOGLE_SCRIPT_GET_URL"
-REMOVE_CN_URL = "YOUR_GOOGLE_SCRIPT_POST_URL"
-SAVE_DATA_URL = "YOUR_EXISTING_GOOGLE_SCRIPT_URL"
-PRINT_API_URL = "https://print.yourdomain.com/print"  # optional
+def compress_image(uploaded_file):
+    img = Image.open(uploaded_file)
+    img = img.resize((800, 800))
+
+    buffer = io.BytesIO()
+    img.save(buffer, format="JPEG", quality=30)
+
+    return buffer.getvalue()
 
 # ---------------------------
-# GET CN FROM GOOGLE SHEET
+# GET NEXT CN
 # ---------------------------
-def get_cn(customer):
-    try:
-        res = requests.get(f"{GET_CN_URL}?customer={customer}")
-        if res.text == "NONE":
-            return None
-        return res.text.strip()
-    except:
-        return None
+def get_next_cn(customer):
+    res = supabase.table("consignment_no") \
+        .select("*") \
+        .eq("customer_name", customer) \
+        .is_("used_date", None) \
+        .limit(1) \
+        .execute()
+
+    if res.data:
+        return res.data[0]["consignment_no"]
+    return None
 
 # ---------------------------
-# REMOVE USED CN
+# MARK USED
 # ---------------------------
-def remove_cn(customer):
-    try:
-        requests.post(REMOVE_CN_URL, json={"customer": customer})
-    except:
-        pass
+def mark_used(cn):
+    supabase.table("consignment_no") \
+        .update({"used_date": str(datetime.datetime.now())}) \
+        .eq("consignment_no", cn) \
+        .execute()
 
 # ---------------------------
 # UI
 # ---------------------------
-customer = st.selectbox("Customer", ["-- Select --", "CUS1", "CUS2", "CUS3"])
+customer = st.selectbox("Customer", ["CUS1", "CUS2", "CUS3"])
 
-if customer == "-- Select --":
-    st.stop()
+cn_auto = get_next_cn(customer)
 
-# ---------------------------
-# GET CN PREVIEW
-# ---------------------------
-cn_preview = get_cn(customer)
+st.success(f"Auto CN: {cn_auto}")
 
-if not cn_preview:
-    st.error("No Consignment Number Available")
-    st.stop()
+barcode = st.text_input("Scan / Enter CN")
 
-st.success(f"Next CN: {cn_preview}")
+if barcode:
+    cn = barcode
+else:
+    cn = cn_auto
 
 # ---------------------------
 # INPUTS
@@ -59,60 +75,81 @@ st.success(f"Next CN: {cn_preview}")
 sender_phone = st.text_input("Sender Phone")
 receiver_phone = st.text_input("Receiver Phone")
 pincode = st.text_input("Pincode")
-remarks = st.text_input("Remarks")
 content = st.text_input("Content")
 
-risk = st.selectbox("Risk", ["Owner Risk", "Carrier Risk", "No Risk"])
-payment = st.selectbox("Payment", ["Cash", "Credit", "To Pay"])
+photo = st.file_uploader("Upload Photo")
 
-photo = st.file_uploader("Upload Photo (optional)")
-
-print_required = st.checkbox("🖨️ Print")
+print_required = st.checkbox("Print")
 
 # ---------------------------
 # SUBMIT
 # ---------------------------
 if st.button("Submit"):
 
-    if not sender_phone.isdigit() or not receiver_phone.isdigit():
-        st.error("Phone number invalid")
+    if not sender_phone:
+        st.error("Sender phone required")
         st.stop()
 
-    cn = cn_preview
-    now = str(datetime.datetime.now())
+    # ---------------------------
+    # COMPRESS + UPLOAD PHOTO
+    # ---------------------------
+    photo_url = ""
+
+    if photo:
+        compressed = compress_image(photo)
+
+        supabase.storage.from_("photos").upload(
+            f"{cn}.jpg",
+            compressed
+        )
+
+        photo_url = f"{SUPABASE_URL}/storage/v1/object/public/photos/{cn}.jpg"
 
     # ---------------------------
-    # SAVE MAIN DATA (YOUR EXISTING SCRIPT)
+    # PDF GENERATE (HTML)
     # ---------------------------
-    try:
-        requests.post(SAVE_DATA_URL, json={
-            "time": now,
-            "cn": cn,
-            "customer": customer,
-            "sender_phone": sender_phone,
-            "receiver_phone": receiver_phone,
-            "pincode": pincode,
-            "remarks": remarks,
-            "content": content,
-            "risk": risk,
-            "payment": payment,
-            "print": print_required
-        })
-    except:
-        st.warning("Data save failed")
+    html = f"""
+    <h3>DTDC BILL</h3>
+    CN: {cn}<br>
+    Sender: {sender_phone}<br>
+    Receiver: {receiver_phone}<br>
+    Pincode: {pincode}<br>
+    Content: {content}
+    """
+
+    pdf_bytes = html.encode()
+
+    supabase.storage.from_("bills").upload(
+        f"{cn}.pdf",
+        pdf_bytes
+    )
 
     # ---------------------------
-    # REMOVE USED CN
+    # SAVE RECORD
     # ---------------------------
-    remove_cn(customer)
+    supabase.table("record").insert({
+        "consignment": cn,
+        "customer": customer,
+        "sender_phone": sender_phone,
+        "receiver_phone": receiver_phone,
+        "pincode": pincode,
+        "content": content
+    }).execute()
 
     # ---------------------------
-    # PRINT CALL (PC ON irundha)
+    # MARK USED
+    # ---------------------------
+    mark_used(cn)
+
+    # ---------------------------
+    # PRINT (OPTIONAL)
     # ---------------------------
     if print_required:
         try:
-            requests.post(PRINT_API_URL, json={"cn": cn}, timeout=2)
+            requests.post("https://your-print-api/print", json={"cn": cn})
         except:
             pass
 
-    st.success(f"Booking Done ✅ CN: {cn}")
+    st.success(f"Done ✅ {cn}")
+
+    st.experimental_rerun()
