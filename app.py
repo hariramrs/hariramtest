@@ -9,8 +9,8 @@ import requests
 # ---------------------------
 # SUPABASE CONFIG
 # ---------------------------
-SUPABASE_URL = "YOUR_URL"
-SUPABASE_KEY = "YOUR_KEY"
+SUPABASE_URL = "https://faepxvomqitkrwrmvqkw.supabase.co/rest/v1/"
+SUPABASE_KEY = "sb_publishable_TRUzAINeAbQ1Jf5bL8qofg_0FlGMin6"
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
