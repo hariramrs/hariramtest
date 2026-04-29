@@ -301,22 +301,46 @@ st.success(f"Auto CN: {cn_auto}")
 # ---------------------------
 # BARCODE SCANNER 🔥
 # ---------------------------
+
 st.subheader("📷 Barcode Scanner")
 
-components.html("""
-<div id="reader" style="width:300px"></div>
-<p id="result" style="font-weight:bold;"></p>
+scan_value = components.html("""
+<div id="reader" style="width:100%"></div>
 
 <script src="https://unpkg.com/html5-qrcode"></script>
 
 <script>
-function onScanSuccess(decodedText) {
-    document.getElementById("result").innerText = decodedText;
+function sendToStreamlit(value){
+    window.parent.postMessage({
+        type: "streamlit:setComponentValue",
+        value: value
+    }, "*");
 }
-let scanner = new Html5QrcodeScanner("reader", { fps: 10, qrbox: 250 });
-scanner.render(onScanSuccess);
+
+function onScanSuccess(decodedText) {
+    sendToStreamlit(decodedText);
+}
+
+let scanner = new Html5Qrcode("reader");
+
+scanner.start(
+    { facingMode: "environment" },
+    {
+        fps: 10,
+        qrbox: { width: 250, height: 120 },
+        formatsToSupport: [Html5QrcodeSupportedFormats.CODE_128]
+    },
+    onScanSuccess
+);
 </script>
-""", height=350)
+""", height=300)
+
+# 👉 இதுதான் important
+if scan_value:
+    st.success(f"Scanned: {scan_value}")
+    st.session_state["cn"] = scan_value
+    cn_auto =  scan_value
+
 
 scanned_value = st.text_input("Paste scanned value here")
 
